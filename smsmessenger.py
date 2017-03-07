@@ -2,7 +2,7 @@ from twilio.rest import TwilioRestClient
 
 ACCOUNT_SID = ''
 AUTH_TOKEN = ''
-TWILIO_NUMBER = '+17345489952'
+TWILIO_NUMBER = ''
 
 class SMSMessenger:
     
@@ -18,14 +18,22 @@ class SMSMessenger:
     def addNumber(self, number):
         self._numbers.append(self._numPrefix + number)
         
-    def sendMessage(self, msg):
+    def sendMessage(self, id, msg):
         self._twilioCli.messages.create(
-            to = self._numbers[0 ],
+            to = self._numbers[id],
             from_ = TWILIO_NUMBER,
             body = msg
         )
 
+    def broadcastMessage(self, msg):
+        for num in self._numbers:
+            self._twilioCli.messages.create(
+                to = num,
+                from_ = TWILIO_NUMBER,
+                body = msg
+            )
+
 if __name__ == '__main__':
     msgr = SMSMessenger()
     msgr.addNumber("7347413624")
-    msgr.sendMessage("Hello World!")
+    msgr.broadcastMessage("Hello World!")
