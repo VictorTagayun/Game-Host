@@ -1,19 +1,55 @@
 from twilio.rest import TwilioRestClient
-
-ACCOUNT_SID = ''
-AUTH_TOKEN = ''
-TWILIO_NUMBER = ''
+import twilio.twiml
+from flask import Flask, request
+import Common.flask_helpers as flask_helpers
+import configparser
+import asyncio
 
 class SMSMessenger:
     
     def __init__(self):
+        # Config
+        config = configparser.ConfigParser(allow_no_value=True)
+        config.read('TwilioConfig.ini')
+        
         # Twilio account
-        self._twilioCli = TwilioRestClient(ACCOUNT_SID, AUTH_TOKEN)
-    
+        account_sid = config.get('Auth','account_sid')
+        auth_token = config.get('Auth','auth_token')
+        self._twilioCli = TwilioRestClient(account_sid, auth_token)
+        self._twilioNumber = config.get('Auth', 'twilio_number')
     
         # cell phone numbers of player
         self._numbers = []
         self._numPrefix = "+1"
+
+        # Server variables
+        self._app = Flask(__name__)
+
+        # Event observers
+        self._observers = []
+
+    def run(self):
+        self._app.add_url_rule("/", "textResponse", self.textResponse, methods=["GET", "POST"])
+        flask_helpers.run_flask(self._app)
+
+    def addObserver(self, func):
+        self._observers.append(func)
+
+    def notifyObservers(self, msg):
+        for ob in self._observers:
+            ob(msg)
+
+    def textResponse(self):
+        fromNumber = request.values.get("From", None)
+        messageText = request.values.get("Body", None)
+        print(fromNumber, " sends: ", messageText)
+
+        self.notifyObservers(messageText)
+        
+        resp = twilio.twiml.Response()
+        # return resoinse
+        return str(resp)
+        
 
     def addNumber(self, number):
         self._numbers.append(self._numPrefix + number)
@@ -21,7 +57,7 @@ class SMSMessenger:
     def sendMessage(self, id, msg):
         self._twilioCli.messages.create(
             to = self._numbers[id],
-            from_ = TWILIO_NUMBER,
+            from_ = self._twilioNumber,
             body = msg
         )
 
@@ -29,11 +65,12 @@ class SMSMessenger:
         for num in self._numbers:
             self._twilioCli.messages.create(
                 to = num,
-                from_ = TWILIO_NUMBER,
+                from_ = self._twilioNumber,
                 body = msg
             )
 
 if __name__ == '__main__':
     msgr = SMSMessenger()
     msgr.addNumber("7347413624")
-    msgr.broadcastMessage("Hello World!")
+    msgr.run()
+    print("End of main func")
