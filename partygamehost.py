@@ -56,8 +56,8 @@ class PartyGameHost:
         
         self._msgr = SMSMessenger()
         self._msgReceived = False
-        self._msg = None
-        self._lastSender = None
+        self._msgBuffer = []
+        self._senderBuffer = []
 
         # hierarchical state machine
         self._currState = "Prepare"
@@ -87,26 +87,26 @@ class PartyGameHost:
         if msg:
             with self._lock:
                 self._msgReceived = True
-                self._msg = msg
-                self._lastSender = sender
-
-    async def processMessage(self):
-        with self._lock:
-            if self._msgReceived:
-                self._msgReceived = False
-                await self._robot.say_text(self._msg).wait_for_completed()
+                self._msgBuffer.append(msg)
+                self._senderBuffer.append(sender)
 
     async def announce(self, msg):
         await self._robot.say_text(msg).wait_for_completed()
 
     async def processMsgPrepare(self):
+        msg = None
+        sender = None
         with self._lock:
             if self._msgReceived:
-                self._msgReceived = False
-                (command,_,name) = self._msg.partition(",")
-                if command == "Join" and name not in self._players:
-                    self._players[name] = Player(name, self._lastSender)
-                    print(len(self._players), " players joined")
+                msg = self._msgBuffer.pop(0)
+                sender = self._senderBuffer.pop(0)
+                if not self._msgBuffer:
+                    self._msgReceived = False
+                    
+        (command,_,name) = msg.partition(",")
+        if command == "Join" and name not in self._players:
+            self._players[name] = Player(name, sender)
+            print(len(self._players), " players joined")
 
     async def mainLoopPrepare(self):
         # enough players to start game
