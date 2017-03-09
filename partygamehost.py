@@ -65,15 +65,15 @@ class PartyGameHost:
         # state handlers
         self._stateMsgProcessor = {
             "Prepare": self.processMsgPrepare,
-            "Night": None,
-            "Day": None
+            "Night": self.processMsgNight,
+            "Day": self.processMsgDay
         }
 
         # state main loop
         self._stateMainLoop = {
             "Prepare": self.mainLoopPrepare,
-            "Night": None,
-            "Day": None
+            "Night": self.mainLoopNight,
+            "Day": self.mainLoopDay
         }
 
 
@@ -96,17 +96,20 @@ class PartyGameHost:
     async def processMsgPrepare(self):
         msg = None
         sender = None
+        msgToProcess = False
         with self._lock:
             if self._msgReceived:
+                msgToProcess = True
                 msg = self._msgBuffer.pop(0)
                 sender = self._senderBuffer.pop(0)
                 if not self._msgBuffer:
                     self._msgReceived = False
-                    
-        (command,_,name) = msg.partition(",")
-        if command == "Join" and name not in self._players:
-            self._players[name] = Player(name, sender)
-            print(len(self._players), " players joined")
+
+        if msgToProcess:
+            (command,_,name) = msg.partition(",")
+            if command == "Join" and name not in self._players:
+                self._players[name] = Player(name, sender)
+                print(len(self._players), " players joined")
 
     async def mainLoopPrepare(self):
         # enough players to start game
@@ -115,6 +118,18 @@ class PartyGameHost:
             
             # change state to start game
             self._currState = "Night"
+
+    async def processMsgNight(self):
+        pass
+
+    async def mainLoopNight(self):
+        pass
+
+    async def processMsgDay(self):
+        pass
+
+    async def mainLoopDay(self):
+        pass
     
     async def assignRoles(self):
         # announce
