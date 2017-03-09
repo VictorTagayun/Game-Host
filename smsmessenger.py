@@ -35,16 +35,16 @@ class SMSMessenger:
     def addObserver(self, func):
         self._observers.append(func)
 
-    def notifyObservers(self, msg):
+    def notifyObservers(self, msg, sender):
         for ob in self._observers:
-            ob(msg)
+            ob(msg, sender)
 
     def textResponse(self):
         fromNumber = request.values.get("From", None)
         messageText = request.values.get("Body", None)
         print(fromNumber, " sends: ", messageText)
 
-        self.notifyObservers(messageText)
+        self.notifyObservers(messageText, fromNumber)
         
         resp = twilio.twiml.Response()
         # return resoinse
