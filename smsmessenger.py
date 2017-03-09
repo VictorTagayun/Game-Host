@@ -52,11 +52,18 @@ class SMSMessenger:
         
 
     def addNumber(self, number):
-        self._numbers.append(self._numPrefix + number)
+        self._numbers.append(number)
         
-    def sendMessage(self, id, msg):
+    def sendMessage(self, id: int, msg):
         self._twilioCli.messages.create(
             to = self._numbers[id],
+            from_ = self._twilioNumber,
+            body = msg
+        )
+
+    def sendMessage(self, number, msg):
+        self._twilioCli.messages.create(
+            to = number,
             from_ = self._twilioNumber,
             body = msg
         )
@@ -71,6 +78,6 @@ class SMSMessenger:
 
 if __name__ == '__main__':
     msgr = SMSMessenger()
-    msgr.addNumber("7347413624")
+    msgr.addNumber("+17347413624")
     msgr.run()
     print("End of main func")
