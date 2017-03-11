@@ -9,13 +9,7 @@ NUM_MAFIA = 2
 NUM_INNOCENT = 4
 NUM_PLAYER = 6
 
-ANNOUNCEMENTS = {
-    "Role Start": "Start to assign roles",
-    "Night Start": "Close your eyes",
-    "Barman": "Cancel doctor, detective, or not",
-    "Doctor": "",
-    "Detective": ""
-}
+NIGHT_DECISION_TIME = 15
 
 PRIVATE_MESSAGES = {
     "Role Detail" : "%s, your role is: %s"
@@ -36,6 +30,20 @@ ROLE_NAME = {
     Role.BARMAN: "barman"
 }
 
+ANNOUNCEMENTS = {
+    "Role Start": "Start to assign roles",
+    Role.CITIZEN: "Night is coming. Close your eyes",
+    Role.BARMAN: "Barman, open your eyes,,, Cancel doctor, detective, or not?",
+    Role.DOCTOR: "Doctor, open your eyes,,, who do you want to protect?",
+    Role.DETECTIVE: "Detective, open your eyes,,, who do you want to check?",
+    Role.MAFIOSO: "Mafia, open your eyes,,, who do you want to kill?"
+}
+
+class T1State(Enum):
+    PREPARE = 0,
+    NIGHT = 1,
+    DAY = 2
+
 MAFIA_POOL = [Role.MAFIOSO, Role.MAFIOSO, Role.BARMAN]
 INNOCENT_POOL = [Role.CITIZEN, Role.CITIZEN, Role.CITIZEN, Role.CITIZEN, Role.DOCTOR, Role.DETECTIVE]
 
@@ -43,10 +51,12 @@ class Player:
     name = None
     number = None
     role = None
+    alive = None
     
     def __init__(self, name, number):
         self.name = name
         self.number = number
+        self.alive = True
 
 
 class PartyGameHost:
@@ -59,21 +69,37 @@ class PartyGameHost:
         self._msgBuffer = []
         self._senderBuffer = []
 
-        # hierarchical state machine
-        self._currState = "Prepare"
 
         # state handlers
         self._stateMsgProcessor = {
-            "Prepare": self.processMsgPrepare,
-            "Night": self.processMsgNight,
-            "Day": self.processMsgDay
+            T1State.PREPARE: self.processMsgPrepare,
+            T1State.NIGHT: self.processMsgNight,
+            T1State.DAY: self.processMsgDay
         }
 
         # state main loop
         self._stateMainLoop = {
-            "Prepare": self.mainLoopPrepare,
-            "Night": self.mainLoopNight,
-            "Day": self.mainLoopDay
+            T1State.PREPARE: self.mainLoopPrepare,
+            T1State.NIGHT: self.mainLoopNight,
+            T1State.DAY: self.mainLoopDay
+        }
+
+        # night msg handlers
+        self._nightMsgProcessor = {
+            Role.CITIZEN: self.processMsgNightOpen,
+            Role.MAFIOSO: self.processMsgMafioso,
+            Role.BARMAN: self.processMsgBarman,
+            Role.DOCTOR: self.processMsgDoctor,
+            Role.DETECTIVE: self.processMsgDetective
+        }
+
+        # night main loops
+        self._nightMainLoop = {
+            Role.CITIZEN: self.mainLoopNightOpen,
+            Role.MAFIOSO: self.mainLoopMafioso,
+            Role.BARMAN: self.mainLoopBarman,
+            Role.DOCTOR: self.mainLoopDoctor,
+            Role.DETECTIVE: self.mainLoopDetective
         }
 
 
@@ -83,6 +109,18 @@ class PartyGameHost:
         self._players = {}
         self._roleRecords = {}
 
+        # hierarchical state machine
+        self._currState = T1State.PREPARE
+        self._nightState = None
+
+        # night state variables
+        self._announced = False
+        self._victim = None
+        self._protected = None
+        self._blocked = None
+
+        
+
     def receiveMessage(self, msg, sender=None):
         if msg:
             with self._lock:
@@ -91,25 +129,33 @@ class PartyGameHost:
                 self._senderBuffer.append(sender)
 
     async def announce(self, msg):
-        await self._robot.say_text(msg).wait_for_completed()
+        self._announced = True
+        await self._robot.say_text(msg, play_excited_animation=True, duration_scalar=1.3).wait_for_completed()
 
     async def processMsgPrepare(self):
+        (msg,sender) = self.fetchFromBuffer()
+
+        # get concrete message to work on
+        if msg:
+            (command,_,name) = msg.partition(",")
+            command = command.strip()
+            name = name.strip()
+            if command == "Join" and name not in self._players:
+                self._players[name] = Player(name, sender)
+                print(len(self._players), " players joined")
+
+    # common code to get message from buffer
+    def fetchFromBuffer(self):
         msg = None
         sender = None
-        msgToProcess = False
         with self._lock:
             if self._msgReceived:
-                msgToProcess = True
                 msg = self._msgBuffer.pop(0)
                 sender = self._senderBuffer.pop(0)
                 if not self._msgBuffer:
                     self._msgReceived = False
 
-        if msgToProcess:
-            (command,_,name) = msg.partition(",")
-            if command == "Join" and name not in self._players:
-                self._players[name] = Player(name, sender)
-                print(len(self._players), " players joined")
+        return (msg, sender)
 
     async def mainLoopPrepare(self):
         # enough players to start game
@@ -117,16 +163,22 @@ class PartyGameHost:
             await self.assignRoles()
             
             # change state to start game
-            self._currState = "Night"
+            await self.changeState(T1State.NIGHT, Role.CITIZEN)
 
     async def processMsgNight(self):
-        pass
+        (msg,sender) = self.fetchFromBuffer()
+
+        if msg:
+            self._nightMsgProcessor[self._nightState](msg, sender)
 
     async def mainLoopNight(self):
-        pass
+        if not self._announced:
+            await self.announce(ANNOUNCEMENTS[self._nightState])
+        
+        self._nightMainLoop[self._nightState]()
 
     async def processMsgDay(self):
-        pass
+        (msg,sender) = self.fetchFromBuffer()
 
     async def mainLoopDay(self):
         pass
@@ -145,20 +197,81 @@ class PartyGameHost:
         for i in range(0, NUM_MAFIA):
             name = mafiaNames[i]
             role = mafiaRoles[i]
-            player = self._players[name]
-            player.role = role
-            self._roleRecords[role] = name
-            msg = PRIVATE_MESSAGES["Role Detail"] % (name, ROLE_NAME[role])
-            self._msgr.sendMessage(player.number, msg)
+            self.sendRoleAssignmentMessage(name, role)
 
         for i in range(0, NUM_INNOCENT):
             name = innocentNames[i]
             role = innocentRoles[i]
-            player = self._players[name]
-            player.role = role
-            self._roleRecords[role] = name
-            msg = PRIVATE_MESSAGES["Role Detail"] % (name, ROLE_NAME[role])
-            self._msgr.sendMessage(player.number, msg)
+            self.sendRoleAssignmentMessage(name, role)
+
+    def sendRoleAssignmentMessage(self, name, role):
+        player = self._players[name]
+        player.role = role
+        self._roleRecords[role] = name
+        msg = PRIVATE_MESSAGES["Role Detail"] % (name, ROLE_NAME[role])
+        print(msg)
+        self._msgr.sendMessage(player.number, msg)
+
+    def processMsgNightOpen(self, msg, sender):
+        pass
+
+    def processMsgMafioso(self, msg, sender):
+        (command,_,name) = msg.partition(",")
+        command = command.strip()
+        name = name.strip()
+
+        if command == "Kill":
+            self._victim = name
+
+    def processMsgBarman(self, msg, sender):
+        (command,_,job) = msg.partition(",")
+        command = command.strip()
+        job = job.strip()
+
+        if command == "Cancel":
+            if job == "Doctor":
+                self._blocked = Role.DOCTOR
+            elif job == "Detective":
+                self._blocked = Role.DETECTIVE
+            else:
+                self._blocked = None
+            
+
+    def processMsgDoctor(self, msg, sender):
+        (command,_,name) = msg.partition(",")
+        command = command.strip()
+        name = name.strip()
+
+        if command == "Protect" and self._blocked != self._nightState:
+            self._protected = name
+
+    def processMsgDetective(self, msg, sender):
+        pass
+
+    def mainLoopNightOpen(self, msg, sender):
+        pass
+
+    def mainLoopMafioso(self, msg, sender):
+        pass
+
+    def mainLoopBarman(self, msg, sender):
+        pass
+
+    def mainLoopDoctor(self, msg, sender):
+        pass
+
+    def mainLoopDetective(self, msg, sender):
+        pass
+
+    async def changeState(self, state, nightState):
+        self._currState = state
+        self._nightState = nightState
+        self._announced = False
+        with self._lock:
+            self._msgBuffer = []
+            self._senderBuffer = []
+            self._msgReceived = False
+        await asyncio.sleep(0.5)
         
 
     async def run(self, coz_conn:cozmo.conn.CozmoConnection):
