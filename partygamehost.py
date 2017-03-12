@@ -156,6 +156,9 @@ class PartyGameHost:
             number = self._players[name].number
             self._msgr.sendMessage(number, "Your ability is canceled by barman tonight")
 
+    async del cozmoSpeak(self, msg):
+        await self._robot.say_text(msg, play_excited_animation=True, duration_scalar=1.3).wait_for_completed()
+        
     async def processMsgPrepare(self):
         (msg,sender) = self.fetchFromBuffer()
 
@@ -332,36 +335,36 @@ class PartyGameHost:
 
     async def mainLoopMafioso(self):
         if self._victim:
-            await self.announce(END_STATE[self._nightState])
+            await self.cozmoSpeak(END_STATE[self._nightState])
             await self.changeState(T1State.NIGHT, Role.BARMAN)
 
     async def mainLoopBarman(self):
         # if this role doesn't exist
         if self._nightState not in self._roleRecords:
             await asyncio.sleep(10)
-            await self.announce(END_STATE[self._nightState])
+            await self.cozmoSpeak(END_STATE[self._nightState])
             await self.changeState(T1State.NIGHT, Role.DOCTOR)
         
         elif self._blocked:
-            await self.announce(END_STATE[self._nightState])
+            await self.cozmoSpeak(END_STATE[self._nightState])
             await self.changeState(T1State.NIGHT, Role.DOCTOR)
 
     async def mainLoopDoctor(self):
         # if ability is canceled or this role doesn't exist
         if self._blocked == self._nightState or self._nightState not in self._roleRecords:
             await asyncio.sleep(10)
-            await self.announce(END_STATE[self._nightState])
+            await self.cozmoSpeak(END_STATE[self._nightState])
             await self.changeState(T1State.NIGHT, Role.DETECTIVE)
         
         elif self._protected:
-            await self.announce(END_STATE[self._nightState])
+            await self.cozmoSpeak(END_STATE[self._nightState])
             await self.changeState(T1State.NIGHT, Role.DETECTIVE)
 
     async def mainLoopDetective(self):
         # if ability is canceled or this role doesn't exist
         if self._blocked == self._nightState or self._nightState not in self._roleRecords:
             await asyncio.sleep(10)
-            await self.announce(END_STATE[self._nightState])
+            await self.cozmoSpeak(END_STATE[self._nightState])
             await self.changeState(T1State.DAY, None)
         
         elif self._detected:
