@@ -31,19 +31,29 @@ ROLE_NAME = {
     Role.BARMAN: "barman"
 }
 
+class T1State(Enum):
+    PREPARE = 0,
+    NIGHT = 1,
+    DAY = 2
+
 ANNOUNCEMENTS = {
     "Role Start": "Start to assign roles",
     Role.CITIZEN: "Night is coming. Close your eyes",
     Role.BARMAN: "Barman, open your eyes,,, Cancel doctor, detective, or not?",
     Role.DOCTOR: "Doctor, open your eyes,,, who do you want to protect?",
     Role.DETECTIVE: "Detective, open your eyes,,, who do you want to check?",
-    Role.MAFIOSO: "Mafia, open your eyes,,, who do you want to kill?"
+    Role.MAFIOSO: "Mafia, open your eyes,,, who do you want to kill?",
+    T1State.DAY: "Night is over, open your eyes. %s, died last night.",
+    "Vote": "Discuss, and vote to lynch one suspect.",
+    "Win": "%s win the game"
 }
 
-class T1State(Enum):
-    PREPARE = 0,
-    NIGHT = 1,
-    DAY = 2
+END_STATE = {
+    Role.BARMAN: "Barman, close your eyes.",
+    Role.DOCTOR: "Doctor, close your eyes.",
+    Role.DETECTIVE: "Detective, close your eyes.",
+    Role.MAFIOSO: "Mafia, close your eyes.",
+}
 
 MAFIA_POOL = [Role.MAFIOSO, Role.MAFIOSO, Role.BARMAN]
 INNOCENT_POOL = [Role.CITIZEN, Role.CITIZEN, Role.CITIZEN, Role.CITIZEN, Role.DOCTOR, Role.DETECTIVE]
@@ -105,10 +115,14 @@ class PartyGameHost:
 
 
     def initializeGame(self):
+        print("Initializing game")
+        
         # player data
         self._playerNumbers = []
         self._players = {}
         self._roleRecords = {}
+        self._mafiaCount = NUM_MAFIA
+        self._innocentCount = NUM_INNOCENT
 
         # hierarchical state machine
         self._currState = T1State.PREPARE
@@ -120,6 +134,9 @@ class PartyGameHost:
         self._protected = None
         self._blocked = None
         self._detected = None
+        self._executed = None
+
+        print("Initializing finish, waiting for players join")
 
         
 
@@ -133,7 +150,7 @@ class PartyGameHost:
     async def announce(self, msg):
         self._announced = True
         await self._robot.say_text(msg, play_excited_animation=True, duration_scalar=1.3).wait_for_completed()
-        if self._currState == T1State.NIGHT and self._blocked == self._nightState and self._nightState != Role.CITIZEN:
+        if self._currState == T1State.NIGHT and self._blocked in self._roleRecords and self._blocked == self._nightState and self._nightState != Role.CITIZEN:
             # privately inform the player about blocking
             name = self._roleRecords[self._blocked]
             number = self._players[name].number
@@ -187,8 +204,54 @@ class PartyGameHost:
     async def processMsgDay(self):
         (msg,sender) = self.fetchFromBuffer()
 
+        if msg:
+            (command,_,name) = msg.partition(",")
+            command = command.strip()
+            name = name.strip()
+
+            if command == "Vote" and name in self._players and self._players[name].alive:
+                self._executed = name
+
     async def mainLoopDay(self):
-        pass
+        if not self._announced:
+            self._executed = None
+            protected = self._protected == self._victim
+            victim = "Nobody"
+            if not protected:
+                victim = self._victim
+                self.killPlayer(victim)
+                    
+            msg = ANNOUNCEMENTS[T1State.DAY] % victim
+            await self.announce(msg)
+            if self._innocentCount > self._mafiaCount and self._mafiaCount > 0:
+                await self.announce(ANNOUNCEMENTS["Vote"])
+
+        if self._executed:
+            name = self._executed
+            self.killPlayer(name)
+            
+            if self._innocentCount > self._mafiaCount and self._mafiaCount > 0:
+                # change state to night state
+                await self.changeState(T1State.NIGHT, Role.CITIZEN)
+
+        if self._innocentCount <= self._mafiaCount or self._mafiaCount == 0:
+            innocentWins = self._mafiaCount == 0
+            winner = "innocent" if innocentWins else "mafia"
+            await self.announce(ANNOUNCEMENTS["Win"] % winner)
+            await asyncio.sleep(1)
+            self.initializeGame()
+
+    def killPlayer(self, name):
+        print("Player %s is dead" % name)
+        self._players[name].alive = False
+        role = self._players[name].role
+        if role == Role.MAFIOSO or role == Role.BARMAN:
+            self._mafiaCount -= 1
+        else:
+            self._innocentCount -= 1
+
+        if role in self._roleRecords:
+            del self._roleRecords[role]
     
     async def assignRoles(self):
         # announce
@@ -227,7 +290,7 @@ class PartyGameHost:
         command = command.strip()
         name = name.strip()
 
-        if command == "Kill" and name in self._players:
+        if command == "Kill" and name in self._players and self._players[name].alive:
             self._victim = name
 
     def processMsgBarman(self, msg, sender):
@@ -236,9 +299,9 @@ class PartyGameHost:
         job = job.strip()
 
         if command == "Cancel":
-            if job == "Doctor":
+            if job.lower() == "doctor":
                 self._blocked = Role.DOCTOR
-            elif job == "Detective":
+            elif job.lower() == "detective":
                 self._blocked = Role.DETECTIVE
             else:
                 self._blocked = Role.CITIZEN
@@ -249,7 +312,7 @@ class PartyGameHost:
         command = command.strip()
         name = name.strip()
 
-        if command == "Protect" and self._blocked != self._nightState and name in self._players:
+        if command == "Protect" and self._blocked != self._nightState and name in self._players and self._players[name].alive:
             self._protected = name
 
     def processMsgDetective(self, msg, sender):
@@ -257,7 +320,7 @@ class PartyGameHost:
         command = command.strip()
         name = name.strip()
 
-        if command == "Detect" and self._blocked != self._nightState and name in self._players:
+        if command == "Detect" and self._blocked != self._nightState and name in self._players and self._players[name].alive:
             self._detected = name
 
     async def mainLoopNightOpen(self):
@@ -269,30 +332,36 @@ class PartyGameHost:
 
     async def mainLoopMafioso(self):
         if self._victim:
+            await self.announce(END_STATE[self._nightState])
             await self.changeState(T1State.NIGHT, Role.BARMAN)
 
     async def mainLoopBarman(self):
         # if this role doesn't exist
         if self._nightState not in self._roleRecords:
             await asyncio.sleep(10)
+            await self.announce(END_STATE[self._nightState])
             await self.changeState(T1State.NIGHT, Role.DOCTOR)
         
         elif self._blocked:
+            await self.announce(END_STATE[self._nightState])
             await self.changeState(T1State.NIGHT, Role.DOCTOR)
 
     async def mainLoopDoctor(self):
         # if ability is canceled or this role doesn't exist
         if self._blocked == self._nightState or self._nightState not in self._roleRecords:
             await asyncio.sleep(10)
+            await self.announce(END_STATE[self._nightState])
             await self.changeState(T1State.NIGHT, Role.DETECTIVE)
         
         elif self._protected:
+            await self.announce(END_STATE[self._nightState])
             await self.changeState(T1State.NIGHT, Role.DETECTIVE)
 
     async def mainLoopDetective(self):
         # if ability is canceled or this role doesn't exist
         if self._blocked == self._nightState or self._nightState not in self._roleRecords:
             await asyncio.sleep(10)
+            await self.announce(END_STATE[self._nightState])
             await self.changeState(T1State.DAY, None)
         
         elif self._detected:
@@ -310,10 +379,12 @@ class PartyGameHost:
             name = self._roleRecords[self._nightState]
             number = self._players[name].number
             self._msgr.sendMessage(number, msg)
-            
+
+            await self.announce(END_STATE[self._nightState])
             await self.changeState(T1State.DAY, None)
 
     async def changeState(self, state, nightState):
+        print("Change to state: ", state, ", ", nightState)
         self._currState = state
         self._nightState = nightState
         self._announced = False
