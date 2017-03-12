@@ -12,7 +12,8 @@ NUM_PLAYER = 6
 NIGHT_DECISION_TIME = 15
 
 PRIVATE_MESSAGES = {
-    "Role Detail" : "%s, your role is: %s"
+    "Role Detail" : "%s, your role is: %s",
+    "Detective Response": "The player you checked is %s"
 }
 
 class Role(Enum):
@@ -118,6 +119,7 @@ class PartyGameHost:
         self._victim = None
         self._protected = None
         self._blocked = None
+        self._detected = None
 
         
 
@@ -131,6 +133,11 @@ class PartyGameHost:
     async def announce(self, msg):
         self._announced = True
         await self._robot.say_text(msg, play_excited_animation=True, duration_scalar=1.3).wait_for_completed()
+        if self._currState == T1State.NIGHT and self._blocked == self._nightState and self._nightState != Role.CITIZEN:
+            # privately inform the player about blocking
+            name = self._roleRecords[self._blocked]
+            number = self._players[name].number
+            self._msgr.sendMessage(number, "Your ability is canceled by barman tonight")
 
     async def processMsgPrepare(self):
         (msg,sender) = self.fetchFromBuffer()
@@ -175,7 +182,7 @@ class PartyGameHost:
         if not self._announced:
             await self.announce(ANNOUNCEMENTS[self._nightState])
         
-        self._nightMainLoop[self._nightState]()
+        await self._nightMainLoop[self._nightState]()
 
     async def processMsgDay(self):
         (msg,sender) = self.fetchFromBuffer()
@@ -220,7 +227,7 @@ class PartyGameHost:
         command = command.strip()
         name = name.strip()
 
-        if command == "Kill":
+        if command == "Kill" and name in self._players:
             self._victim = name
 
     def processMsgBarman(self, msg, sender):
@@ -234,7 +241,7 @@ class PartyGameHost:
             elif job == "Detective":
                 self._blocked = Role.DETECTIVE
             else:
-                self._blocked = None
+                self._blocked = Role.CITIZEN
             
 
     def processMsgDoctor(self, msg, sender):
@@ -242,26 +249,69 @@ class PartyGameHost:
         command = command.strip()
         name = name.strip()
 
-        if command == "Protect" and self._blocked != self._nightState:
+        if command == "Protect" and self._blocked != self._nightState and name in self._players:
             self._protected = name
 
     def processMsgDetective(self, msg, sender):
-        pass
+        (command,_,name) = msg.partition(",")
+        command = command.strip()
+        name = name.strip()
 
-    def mainLoopNightOpen(self, msg, sender):
-        pass
+        if command == "Detect" and self._blocked != self._nightState and name in self._players:
+            self._detected = name
 
-    def mainLoopMafioso(self, msg, sender):
-        pass
+    async def mainLoopNightOpen(self):
+        self._victim = None
+        self._protected = None
+        self._blocked = None
+        self._detected = None
+        await self.changeState(T1State.NIGHT, Role.MAFIOSO)
 
-    def mainLoopBarman(self, msg, sender):
-        pass
+    async def mainLoopMafioso(self):
+        if self._victim:
+            await self.changeState(T1State.NIGHT, Role.BARMAN)
 
-    def mainLoopDoctor(self, msg, sender):
-        pass
+    async def mainLoopBarman(self):
+        # if this role doesn't exist
+        if self._nightState not in self._roleRecords:
+            await asyncio.sleep(10)
+            await self.changeState(T1State.NIGHT, Role.DOCTOR)
+        
+        elif self._blocked:
+            await self.changeState(T1State.NIGHT, Role.DOCTOR)
 
-    def mainLoopDetective(self, msg, sender):
-        pass
+    async def mainLoopDoctor(self):
+        # if ability is canceled or this role doesn't exist
+        if self._blocked == self._nightState or self._nightState not in self._roleRecords:
+            await asyncio.sleep(10)
+            await self.changeState(T1State.NIGHT, Role.DETECTIVE)
+        
+        elif self._protected:
+            await self.changeState(T1State.NIGHT, Role.DETECTIVE)
+
+    async def mainLoopDetective(self):
+        # if ability is canceled or this role doesn't exist
+        if self._blocked == self._nightState or self._nightState not in self._roleRecords:
+            await asyncio.sleep(10)
+            await self.changeState(T1State.DAY, None)
+        
+        elif self._detected:
+            # make detecting result
+            role = self._players[self._detected].role
+            innocent = None
+            if role == Role.MAFIOSO or role == Role.BARMAN:
+                innocent = False
+            else:
+                innocent = True
+            resultMsg = "Innocent" if innocent else "Mafia"
+            msg = PRIVATE_MESSAGES["Detective Response"] % resultMsg
+            
+            # send detecting result
+            name = self._roleRecords[self._nightState]
+            number = self._players[name].number
+            self._msgr.sendMessage(number, msg)
+            
+            await self.changeState(T1State.DAY, None)
 
     async def changeState(self, state, nightState):
         self._currState = state
