@@ -156,7 +156,7 @@ class PartyGameHost:
             number = self._players[name].number
             self._msgr.sendMessage(number, "Your ability is canceled by barman tonight")
 
-    async del cozmoSpeak(self, msg):
+    async def cozmoSpeak(self, msg):
         await self._robot.say_text(msg, play_excited_animation=True, duration_scalar=1.3).wait_for_completed()
         
     async def processMsgPrepare(self):
