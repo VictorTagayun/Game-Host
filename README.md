@@ -30,7 +30,7 @@ How to set it up:
 ![Twilio](/ReadmeImage/twilio.png?raw=true "Twilio")
 
 3. Go to the Phone numbers section and choose a number to be associated with the account. You are allowed one free number with a trial account.
-4. Once you have a number assigned to the account, select it by going to Phone Numbers -> Manage Numbers -> Active Numbers. Under messaging, change �A message comes in� to Webhook and the URL to the ngrok URL as copied in step 7 of PART I.
+4. Once you have a number assigned to the account, select it by going to Phone Numbers -> Manage Numbers -> Active Numbers. Under messaging, change "A message comes in" to Webhook and the URL to the ngrok URL as copied in step 7 of PART I.
 ![Twilio Config](/ReadmeImage/twilio_config.png?raw=true "Twilio Config")
 
 5. Detailed information about Twilio package for Python can be found at: https://www.twilio.com/docs/quickstart/python
